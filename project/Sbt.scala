@@ -177,7 +177,7 @@ object Sbt extends Build
 		publishAll <<= inAll(nonRoots, publishLocal.task),
 		TaskKey[Unit]("build-all") <<= (publishAll, proguard in Proguard, sxr, doc) map { (_,_,_,_) => () }
 	)
-	def docSetting = inConfig(Compile)(inTask(sxr)(doc in ThisScope.copy(task = Global, config = Global) <<= Defaults.docTask))
+	def docSetting = inConfig(Compile)(inTask(sxr)(Defaults.docSetting(doc in ThisScope.copy(task = Global, config = Global))))
 
 	def interfaceSettings = javaOnly ++ Seq(
 		crossPaths := false,
@@ -199,6 +199,8 @@ object Sbt extends Build
 		target <<= (target, scalaVersion) { (base, sv) => base / ("precompiled_" + sv) },
 		scalacOptions := Nil,
 		crossPaths := false,
+		ivyScala ~= { _.map(_.copy(checkExplicit = false, overrideScalaVersion = false)) },
+		conflictWarning ~= { _.copy(filter = const(false)) },
 		exportedProducts in Compile := Nil,
 		exportedProducts in Test := Nil,
 		libraryDependencies <+= scalaVersion( "org.scala-lang" % "scala-compiler" % _ % "provided"),
