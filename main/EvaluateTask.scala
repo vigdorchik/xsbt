@@ -9,7 +9,7 @@ package sbt
 	import Keys.{dummyRoots, dummyState, dummyStreamsManager, executionRoots, pluginData, streamsManager, taskDefinitionKey, transformState}
 	import Scope.{GlobalScope, ThisScope}
 	import Types.const
-	import scala.Console.{RED, RESET}
+	import scala.Console.RED
 
 final case class EvaluateConfig(cancelable: Boolean, restrictions: Seq[Tags.Rule], checkCycles: Boolean = false)
 final case class PluginData(classpath: Seq[Attributed[File]], resolvers: Option[Seq[Resolver]])
@@ -83,23 +83,35 @@ object EvaluateTask
 			for( (task, toNode) <- getTask(structure, taskKey, state, str, ref) ) yield
 				runTask(task, state, str, structure.index.triggers, config)(toNode)
 		}
-	def logIncResult(result: Result[_], streams: Streams) = result match { case Inc(i) => logIncomplete(i, streams); case _ => () }
-	def logIncomplete(result: Incomplete, streams: Streams)
+	def logIncResult(result: Result[_], state: State, streams: Streams) = result match { case Inc(i) => logIncomplete(i, state, streams); case _ => () }
+	def logIncomplete(result: Incomplete, state: State, streams: Streams)
 	{
 		val all = Incomplete linearize result
 		val keyed = for(Incomplete(Some(key: Project.ScopedKey[_]), _, msg, _, ex) <- all) yield (key, msg, ex)
 		val un = all.filter { i => i.node.isEmpty || i.message.isEmpty }
-		for( (key, _, Some(ex)) <- keyed)
-			getStreams(key, streams).log.trace(ex)
+
+			import ExceptionCategory._
+		for( (key, msg, Some(ex)) <- keyed) {
+			def log = getStreams(key, streams).log
+			ExceptionCategory(ex) match {
+				case AlreadyHandled => ()
+				case m: MessageOnly => if(msg.isEmpty) log.error(m.message)
+				case f: Full => log.trace(f.exception)
+			}
+		}
 
 		for( (key, msg, ex) <- keyed if(msg.isDefined || ex.isDefined) )
 		{
 			val msgString = (msg.toList ++ ex.toList.map(ErrorHandling.reducedToString)).mkString("\n\t")
 			val log = getStreams(key, streams).log
-			val keyString = if(log.ansiCodesSupported) RED + key.key.label + RESET else key.key.label
-			log.error(Scope.display(key.scope, keyString) + ": " + msgString)
+			val display = contextDisplay(state, log.ansiCodesSupported)
+			log.error("(" + display(key) + ") " + msgString)
 		}
 	}
+	private[this] def contextDisplay(state: State, highlight: Boolean) = Project.showContextKey(state, if(highlight) Some(RED) else None)
+	def suppressedMessage(key: ScopedKey[_])(implicit display: Show[ScopedKey[_]]): String =
+		"Stack trace suppressed.  Run 'last %s' for the full log.".format(display(key))
+
 	def getStreams(key: ScopedKey[_], streams: Streams): TaskStreams =
 		streams(ScopedKey(Project.fillTaskAxis(key).scope, Keys.streams.key))
 	def withStreams[T](structure: BuildStructure, state: State)(f: Streams => T): T =
@@ -108,17 +120,17 @@ object EvaluateTask
 		try { f(str) } finally { str.close() }
 	}
 	
-	def getTask[T](structure: BuildStructure, taskKey: ScopedKey[Task[T]], state: State, streams: Streams, ref: ProjectRef): Option[(Task[T], Execute.NodeView[Task])] =
+	def getTask[T](structure: BuildStructure, taskKey: ScopedKey[Task[T]], state: State, streams: Streams, ref: ProjectRef): Option[(Task[T], NodeView[Task])] =
 	{
 		val thisScope = Load.projectScope(ref)
 		val resolvedScope = Scope.replaceThis(thisScope)( taskKey.scope )
 		for( t <- structure.data.get(resolvedScope, taskKey.key)) yield
 			(t, nodeView(state, streams, taskKey :: Nil))
 	}
-	def nodeView[HL <: HList](state: State, streams: Streams, roots: Seq[ScopedKey[_]], extraDummies: KList[Task, HL] = KNil, extraValues: HL = HNil): Execute.NodeView[Task] =
+	def nodeView[HL <: HList](state: State, streams: Streams, roots: Seq[ScopedKey[_]], extraDummies: KList[Task, HL] = KNil, extraValues: HL = HNil): NodeView[Task] =
 		Transform(dummyRoots :^: dummyStreamsManager :^: KCons(dummyState, extraDummies), roots :+: streams :+: HCons(state, extraValues))
 
-	def runTask[T](root: Task[T], state: State, streams: Streams, triggers: Triggers[Task], config: EvaluateConfig)(implicit taskToNode: Execute.NodeView[Task]): (State, Result[T]) =
+	def runTask[T](root: Task[T], state: State, streams: Streams, triggers: Triggers[Task], config: EvaluateConfig)(implicit taskToNode: NodeView[Task]): (State, Result[T]) =
 	{
 			import ConcurrentRestrictions.{completionService, TagMap, Tag, tagged, tagsKey}
 	
@@ -134,7 +146,7 @@ object EvaluateTask
 				catch { case inc: Incomplete => (state, Inc(inc)) }
 				finally shutdown()
 			val replaced = transformInc(result)
-			logIncResult(replaced, streams)
+			logIncResult(replaced, state, streams)
 			(newState, replaced)
 		}
 		val cancel = () => {
