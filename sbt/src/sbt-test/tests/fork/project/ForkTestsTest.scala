@@ -33,4 +33,6 @@ object ForkTestsTest extends Build {
 		concurrentRestrictions := Tags.limit(Tags.ForkedTestGroup, 2) :: Nil,
 		libraryDependencies += "org.scalatest" % "scalatest_2.9.0" % "1.6.1" % "test"
 	))
+
+	lazy val empty = Project("empty", file("empty"), settings = defaultSettings :+ (fork in Test := true))
 }
