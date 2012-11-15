@@ -50,15 +50,13 @@ public class ForkMain {
 	}
 	static class ForkError extends Exception implements Serializable {
 		private String originalMessage;
-		private StackTraceElement[] originalStackTrace;
 		private ForkError cause;
 		ForkError(Throwable t) {
 			originalMessage = t.getMessage();
-			originalStackTrace = t.getStackTrace();
+			setStackTrace(t.getStackTrace());
 			if (t.getCause() != null) cause = new ForkError(t.getCause());
 		}
 		public String getMessage() { return originalMessage; }
-		public StackTraceElement[] getStackTrace() { return originalStackTrace; }
 		public Exception getCause() { return cause; }
 	}
 	static class ForkEvent implements Event, Serializable {
